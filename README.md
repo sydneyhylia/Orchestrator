@@ -22,12 +22,14 @@ The plugin is inert in projects without `.orchestrator.json`. In projects with i
 
 ## Install the plugin
 
-From GitHub:
+From GitHub, for one project only. Run both commands from that project's folder:
 
 ```
-claude plugin marketplace add sydneyhylia/Orchestrator
-claude plugin install orchestrator@orchestrator-local
+claude plugin marketplace add sydneyhylia/Orchestrator --scope local
+claude plugin install orchestrator@orchestrator-local --scope local
 ```
+
+`--scope local` keeps the plugin to you, in that project. Use `--scope project` to share it with everyone who clones the repo. Leave `--scope` out to load it in every project on the machine. `/orchestrator:install` asks again when it finds the plugin loaded everywhere.
 
 From a local clone of this folder:
 

@@ -14,6 +14,22 @@ The install has three layers. Store each one in its own place:
 
 Never copy a rule or a lesson from another project.
 
+## Step 0: scope
+
+Run `claude plugin list --json` and read the scope of `orchestrator@orchestrator-local`. If the scope is `project` or `local`, go to step 1.
+
+If the scope is `user`, the plugin loads in every project on this machine. Ask the human once: "Keep orchestrator in every project, or only in this one?"
+
+- **Every project:** go to step 1.
+- **Only this one:** also ask whether the team shares it. `project` writes `.claude/settings.json`, which git shares. `local` writes `.claude/settings.local.json`, which git ignores. Then run, from the repo root:
+
+```
+claude plugin install orchestrator@orchestrator-local --scope <project|local>
+claude plugin uninstall orchestrator@orchestrator-local --scope user
+```
+
+Tell the human to restart the CLI after the install, and continue with step 1.
+
 ## Step 1: measure
 
 Run things. Do not read them off `package.json` or a README.
