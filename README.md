@@ -22,21 +22,35 @@ The plugin is inert in projects without `.orchestrator.json`. In projects with i
 
 ## Install the plugin
 
-From GitHub, for one project only. Run both commands from that project's folder:
+Open Claude Code in the project and run:
+
+```
+/plugin install orchestrator --marketplace sydneyhylia/Orchestrator
+```
+
+Claude Code confirms the marketplace, shows what the plugin adds, and asks where to install it:
+
+- **user scope:** you, in every project on this machine;
+- **project scope:** everyone who works in this repository;
+- **local scope:** you, in this repository only.
+
+This form needs Claude Code 2.1.275 or later. On older versions, run `/plugin marketplace add sydneyhylia/Orchestrator`, then `/plugin install orchestrator@orchestrator-local`. Both open the same scope choice.
+
+From your shell, for scripts, name the scope. Without `--scope` the shell installs at user scope, in every project:
 
 ```
 claude plugin marketplace add sydneyhylia/Orchestrator --scope local
 claude plugin install orchestrator@orchestrator-local --scope local
 ```
 
-`--scope local` keeps the plugin to you, in that project. Use `--scope project` to share it with everyone who clones the repo. Leave `--scope` out to load it in every project on the machine. `/orchestrator:install` asks again when it finds the plugin loaded everywhere.
+`/orchestrator:install` asks again when it finds the plugin at user scope.
 
 From a local clone of this folder:
 
 ```
 claude plugin validate .
 claude plugin marketplace add .
-claude plugin install orchestrator@orchestrator-local
+claude plugin install orchestrator@orchestrator-local --scope local
 ```
 
 To try it without installing: `claude --plugin-dir <path to this folder>`.
