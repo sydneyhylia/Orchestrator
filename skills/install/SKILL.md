@@ -61,7 +61,7 @@ Copy `assets/orchestrator.json` to the repo root as `.orchestrator.json` and fil
 6. Write `<storiesDir>/README.md` from `assets/stories-readme.md`, translated.
 7. Create `<storiesDir>/stories/` and `<storiesDir>/decisions/`.
 8. Add `<storiesDir>/.test-results` to `.gitignore`.
-9. Run `node <storiesDir>/stories.mjs`. It must run clean on the empty folder.
+9. Run `node <storiesDir>/stories.mjs --tests`. It must run clean on the empty folder. Use `--tests` here: a map generated without it says "no results", and the `--tests --check` in step 6 and CI then reports it stale.
 
 All files the project reads are in one language: the project's.
 

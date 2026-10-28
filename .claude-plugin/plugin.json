@@ -1,6 +1,6 @@
 {
   "name": "orchestrator",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "The main session orchestrates and delegates to role agents. User stories drive product work. The human is contacted only at review points.",
   "author": {
     "name": "Sydney and Claude",
