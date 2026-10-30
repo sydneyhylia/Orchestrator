@@ -45,28 +45,35 @@ const git = config.git ?? {};
 const protectedBranches = git.protectedBranches ?? ["main", "master"];
 const broadAddBlocked = git.blockBroadAdd !== false;
 // The role of this session. A Claude Code subagent carries it in agent_type. An Orca worker is a
-// whole session and carries none, so the orchestrator declares it in the worker's own workspace.
+// whole session and carries none, so the orchestrator declares it in the worker's workspace, in a
+// file named after the worker's terminal: Orca gives every terminal ORCA_TERMINAL_HANDLE, and the
+// orchestrator's own terminal has another handle, so a worker on the main checkout cannot gag it.
+function readRole(file) {
+  try { return JSON.parse(stripBom(readFileSync(file, "utf8"))); }
+  catch (e) { block(`${path.relative(root, file)} is not valid JSON (${e.message}). Fix it or delete it.`); }
+}
 function declaredRole() {
+  const handle = process.env.ORCA_TERMINAL_HANDLE;
+  const byHandle = handle && path.join(root, STATE, "roles", `${handle.replace(/[^\w.-]/g, "_")}.json`);
+  if (byHandle && existsSync(byHandle)) return readRole(byHandle);
+  // Before 0.4.0: one role.json per linked worktree. In the main checkout it would gag the orchestrator.
   const file = path.join(root, STATE, "role.json");
-  if (!existsSync(file)) return "";
-  // A role file in the main checkout would gag the orchestrator. Only a linked worktree, or a
-  // workspace with no git at all, can be a worker's own.
+  if (!existsSync(file)) return null;
   try {
     const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-    if (!gitDir.split(path.sep).join("/").includes("/worktrees/")) return "";
+    if (!gitDir.split(path.sep).join("/").includes("/worktrees/")) return null;
   } catch { /* folder workspace: nothing to compare, trust the file */ }
-  let role;
-  try { role = JSON.parse(stripBom(readFileSync(file, "utf8"))); }
-  catch (e) { block(`${STATE}/role.json is not valid JSON (${e.message}). Fix it or delete it.`); }
+  const role = readRole(file);
   // A copy that travelled with the branch names someone else's workspace. Ignore it.
-  if (role.workspace && path.resolve(role.workspace) !== root) return "";
-  return String(role.role ?? "");
+  return role.workspace && path.resolve(role.workspace) !== root ? null : role;
 }
 
-const agentType = String(input.agent_type ?? "") || declaredRole();
+const declared = input.agent_type ? null : declaredRole();
+const agentType = String(input.agent_type ?? "") || String(declared?.role ?? "");
 const inSubagent = Boolean(agentType);
 const isRole = (r) => new RegExp(`(^|:)${r}$`).test(agentType);
-const readOnlyRole = ["reviewer", "researcher", "designer"].some(isRole);
+// A worker's role file says whether it may write. A subagent is also held by its own tools list.
+const readOnlyRole = typeof declared?.readOnly === "boolean" ? declared.readOnly : ["reviewer", "researcher", "designer"].some(isRole);
 
 // Paths are compared repo-relative, so a worktree copy of a locked file matches too.
 const key = (p) => { const k = p.split(path.sep).join("/").replace(/^\.\//, ""); return WIN ? k.toLowerCase() : k; };
@@ -95,9 +102,18 @@ if (input.hook_event_name === "SessionStart") {
   const harness = orca
     ? "Harness, detected now: Orca. Delegate through supervised workers (references/harness.md), whatever the ledger says."
     : "Harness, detected now: plain Claude Code.";
+  // A worker's session starts before the orchestrator dispatches it, so its role is not known yet:
+  // the worker tells itself apart by its first prompt, and the Skill check below holds it.
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart",
-    additionalContext: `This project uses orchestrator. Load the orchestrator:orchestrate skill before any work and follow it. ${harness}` } }));
+    additionalContext: `This project uses orchestrator. If your first prompt is an Orca worker spec or a role brief, you are that role: follow it and do not load orchestrator:orchestrate. Otherwise you are the orchestrator: load the orchestrator:orchestrate skill before any work and follow it. ${harness}` } }));
   process.exit(0);
+}
+
+// ---------- PreToolUse: a role never takes the orchestrator's procedure
+
+if (input.hook_event_name === "PreToolUse" && input.tool_name === "Skill" && inSubagent
+  && /(^|:)orchestrate$/.test(String(input.tool_input?.skill ?? ""))) {
+  block(`you are ${agentType}, not the orchestrator. Follow your spec; ask the orchestrator through \`orca orchestration ask\` when it does not cover something.`);
 }
 
 // ---------- PreToolUse: file edits
@@ -279,8 +295,19 @@ if (input.hook_event_name === "SubagentStop" || input.hook_event_name === "Stop"
   if (changed.length) block(`these locked or orchestrator-owned files differ from HEAD: ${changed.join(", ")}. Restore them with \`git restore <file>\`, then report what you needed to change them for.`);
   // A commit made through an interpreter leaves the tree equal to HEAD. The orchestrator commits each
   // lock, so the last commit that touched the lock list is the base the locked files must still match.
-  const base = run(["log", "-1", "--format=%H", "--", `${STATE}/locked-tests.txt`]);
-  const committed = base ? names(["diff", "--name-only", base, "HEAD", "--", ...lockSet]) : [];
+  // When the role file names the commit the builder started from, only the builder's own commits
+  // count: a merge, a commit made outside the flow, or the orchestrator's lock commit (it changes the
+  // lock list) is not the builder's to answer for.
+  const start = declared?.base;
+  const base = start || run(["log", "-1", "--format=%H", "--", `${STATE}/locked-tests.txt`]);
+  let committed = [];
+  if (start) {
+    for (const sha of names(["log", "--no-merges", "--format=%H", `${start}..HEAD`, "--", ...lockSet])) {
+      const files = names(["show", "--format=", "--name-only", sha]);
+      if (!files.some((f) => key(f) === LOCK_REL)) committed.push(...files.filter((f) => locked.has(key(f))));
+    }
+    committed = [...new Set(committed)];
+  } else if (base) committed = names(["diff", "--name-only", base, "HEAD", "--", ...lockSet]);
   if (committed.length && !input.stop_hook_active) block(`locked files were committed after the lock (${base.slice(0, 7)}): ${committed.join(", ")}. Do not undo it yourself. Report BLOCKED and name these files and the commit.`);
   if (input.stop_hook_active) process.exit(0); // One retry for the verification commands; then the builder reports honestly.
   const deadline = Date.now() + 1000 * 1000; // Stay inside the hook timeout in hooks.json.

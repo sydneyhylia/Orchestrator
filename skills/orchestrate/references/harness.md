@@ -53,7 +53,9 @@ orca orchestration check --wait --types "worker_done,escalation,question" --time
 
 1. **Start the whole independent wave before the first wait.** Launch each terminal first (**Placement → Launch**). `worker-start --spec` creates the Task and its attempt in one call. Use `task-create --deps` plus `worker-start --task <id>` only for real ordering, and prefer parallel waves to chains deeper than three or four steps.
 2. **Process every message in a Delivery before `--ack`.** The batch replays until acknowledged and carries the whole FIFO queue whatever the type filter says. Reply to each question, validate each `worker_done` against the Task you expected and against the evidence rule of §5 of the skill, and decide each settled terminal's next owner.
-3. **Account for every settled worker, immediately, exactly once:** reuse its proven terminal for the next Dispatch (`worker-start --task <next> --terminal <handle>`), `worker-retain` only when the human asked for it, or `worker-release`. Never `terminal close` a worker that is not released. `worker-release` leaves the tab open, so after it close the terminal you launched with `orca terminal close --terminal <handle>`. Keep a builder's terminal until its story leaves review: the fix loop reuses it. Do not end your turn while `worker-list --run <id> --terminal-state reclaimable --json` returns rows.
+   - **Answer every worker's `ask` before you write to the human.** An ask expires; a builder whose questions expired while the orchestrator talked to the human was lost.
+   - **A wake that brings only heartbeats costs one call.** Workers send heartbeats at the cadence Orca sets, and each one can wake you. Acknowledge the batch and return to the typed wait. Do not read terminals, re-plan or report on a heartbeat: it proves liveness, never progress.
+3. **Account for every settled worker, immediately, exactly once:** `worker-release` it, or `worker-retain` only when the human asked for it. Never `terminal close` a worker that is not released. `worker-release` leaves the tab open, so after it close the terminal you launched with `orca terminal close --terminal <handle>`, and delete its role file (**The guard**). A finished worker's terminal does not take a second Dispatch: it changes identity and the dispatch fails. The fix round gets a fresh builder in the same worktree. Do not end your turn while `worker-list --run <id> --terminal-state reclaimable --json` returns rows.
 4. **Remove each writer's worktree when its story is done with it.** That is after the story's commit and after its builder's release. Run `orca worktree rm --worktree <selector> --json` without `--force`. Orca also deletes the branch only when it can prove the branch is merged; the story's branch stays until the human merges it. If the removal refuses (uncommitted changes, a failed hook), leave the worktree and name it in the close report. Never remove `current` or a worktree you did not create. The guard blocks `worktree rm --force`: it discards uncommitted work.
 5. **An empty wait or a timeout is a checkpoint, not a failure.** Keep rolling waits until every expected Dispatch settles. After three consecutive empty waits, enumerate with `worker-list --run <id> --include-remote --json` and run each row's literal `projection.nextAction`; a `none` action means read `liveness.reason` and keep waiting.
 6. **Absence proves nothing.** `unverifiable`, a null `agentWait`, an unchanged output tail and a lost connection are all absence, and absence authorizes no stop, abandon, retry or release. Leave a wait only on positive proof: `exited` liveness, the worker's own observation of exit, or a transcript whose last agent turn sent no `worker_done`. Then load `recovery-and-cleanup` and choose `worker-stop` or `worker-abandon` explicitly.
@@ -87,9 +89,12 @@ A fresh worker means a fresh terminal, not a new Git worktree.
 
 ```
 orca terminal create --worktree <current | the writer's worktree> --title "<role>-<scope>" --command "claude --permission-mode <worker mode>" --json
+#   write <that workspace>/.orchestrator/roles/<handle>.json (The guard)
 orca terminal wait --terminal <handle> --for tui-idle --timeout-ms 60000 --json
 orca orchestration worker-start --terminal <handle> --worktree <same selector> --spec "<the brief>" --task-title "<role>-<scope>" --json
 ```
+
+Use the selector of `terminal create` in `worker-start` too, `current` included.
 
 `orca worktree create` opens a plain shell as the new worktree's first terminal. A writer's worktree then shows an empty tab beside the worker. After `terminal create`, list the worktree's terminals and close every one that is not the worker's handle:
 
@@ -100,7 +105,7 @@ orca terminal close --terminal <the empty shell's handle> --json
 
 Do this only in a worktree you created. On `--worktree current` the other terminals are yours and the human's.
 
-If the wait reports a `blockedReason`, read the terminal and take the prompt to the human (rule 7 of **The loop**). Two prompts can stop a worker. `agent-trust-workspace` is Claude asking to trust the folder; no permission mode skips it. Do not count on a trusted parent folder: on one machine a folder inside a trusted parent still asked. The human trusts each folder workers run in, and the install checks it. The Bypass Permissions warning stops a `bypassPermissions` worker unless the Claude profile it launches with has `skipDangerousModePermissionPrompt: true`; on a machine without it, every bypass worker stopped there. Verified on 2026-10-22: `bypassPermissions` started without a prompt in a trusted folder and stopped at the trust question in an untrusted one; a worker in `auto` mode ran its turn and sent `worker_done`.
+If the wait reports a `blockedReason`, read the terminal and take the prompt to the human (rule 7 of **The loop**). Three prompts can stop a worker. When the project declares MCP servers in `.mcp.json`, Claude asks to approve them for each new folder: the first worker of every worktree stopped there. Approving a server is the human's call; never answer it for them. `agent-trust-workspace` is Claude asking to trust the folder; no permission mode skips it. Do not count on a trusted parent folder: on one machine a folder inside a trusted parent still asked. The human trusts each folder workers run in, and the install checks it. The Bypass Permissions warning stops a `bypassPermissions` worker unless the Claude profile it launches with has `skipDangerousModePermissionPrompt: true`; on a machine without it, every bypass worker stopped there. Verified on 2026-10-22: `bypassPermissions` started without a prompt in a trusted folder and stopped at the trust question in an untrusted one; a worker in `auto` mode ran its turn and sent `worker_done`.
 - Role agents do not dispatch workers; their contracts say so. Nested workers obey `nested_worker_depth_exceeded`, and a new Run does not reset depth.
 
 ## The brief is the spec
@@ -125,6 +130,8 @@ The spec also carries the absolute path of the brief file, the absolute path of 
 
 A worker that was not told its contract will invent one.
 
+A fix round's spec is the role contract, the findings to fix, with their report paths, and the story path. Do not repeat the build brief: the branch already holds that work.
+
 ## Browser
 
 Orca exposes its workspace browser tab through the `orca` CLI: `tab list`, `goto`, `snapshot`, `screenshot --json`, `click`, `fill`, `type`, `keypress`, `eval`, and `exec --command console`. Check that `orca tab list` returns a tab before you promise a UI check. Plain Claude Code exposes no browser of its own; skip the UI check there.
@@ -141,29 +148,33 @@ What a real run taught:
 
 `hooks/guard.mjs` reads the role from the hook's `agent_type`, which exists only for Agent-tool subagents. **An Orca worker is a full Claude Code session: `agent_type` is empty there.** Without a declared role, the read-only roles stop being read-only and the builder stops being held to red-to-green — silently. The git rules and the locked acceptance tests still apply, because those do not depend on the role.
 
-So, for every Orca worker, before you dispatch it:
+Orca gives every terminal its handle in `ORCA_TERMINAL_HANDLE`, and the guard inherits it. So, for every Orca worker, after `terminal create` and before `worker-start`:
 
-1. Write `<the worker's workspace>/.orchestrator/role.json`:
+1. Write `<the worker's workspace>/.orchestrator/roles/<handle>.json`, with the handle `terminal create` returned:
 
 ```json
-{ "role": "builder", "scope": "ACC-002", "workspace": "<absolute path of that workspace>" }
+{ "role": "builder", "scope": "ACC-002", "readOnly": false, "base": "<commit the builder starts from>" }
 ```
 
-The guard reads it when `agent_type` is empty, checks that `workspace` is the workspace it is running in, and then applies the same role rules — plus the builder's verification gate, on the worker's `Stop` instead of `SubagentStop`.
+The guard applies the role rules to that terminal only — plus the builder's verification gate, on the worker's `Stop` instead of `SubagentStop`. A worker on `--worktree current` gets its rules too, and your own terminal keeps none, because its handle differs.
 
-2. **Never write it into your own workspace.** It would apply those rules to you. That is the second reason a writer gets its own workspace.
-3. Delete it when you release the worker.
-4. A workspace whose root has no `.orchestrator.json` is unguarded. Do not place a writer there.
+2. `readOnly` decides whether the worker may write. Set it for every role, project roles included: `true` for `reviewer`, `researcher`, `designer`, a `security-reviewer`, any role that only judges.
+3. `base` is `git rev-parse HEAD` in the builder's worktree before dispatch. The guard then holds the builder only to the locked files it committed itself. Without `base`, a commit made outside the flow, or merged in, stops the builder with a false BLOCKED.
+4. Delete the file when you release the worker.
+5. A workspace whose root has no `.orchestrator.json` is unguarded. Do not place a writer there.
+
+A `.orchestrator/role.json` from before 0.4.0 still works in a linked worktree. Replace it with the per-handle file.
 
 ## Prove it once per project
 
-Before you rely on any of this, prove the chain exists. This check is cheap and it is the one whose absence let an entire plugin ship unexercised:
+Before you rely on any of this, prove the chain exists, the guard included. On one project every worker ran without the guard for a whole day, and nobody noticed:
 
 ```
 orca orchestration run-list --json                 # your Run is there
-orca orchestration worker-list --run <id> --json   # your worker is there
-orca worktree ps                                   # its row, named <role>-<scope>
+orca orchestration worker-list --run <id> --json   # your worker is there, titled <role>-<scope>
 ```
+
+Then prove the guard inside a worker. Launch a throwaway `researcher` on `current` with its role file, and give it this spec: run `echo probe > guard-probe.txt`, report the output, send `worker_done`. Read its terminal with `worker-read`. The proof is the guard's `orchestrator: researcher is read-only` message. If `guard-probe.txt` appears instead, delete it: either the workers do not load the plugin (check the Claude profile Orca launches them with), or the role file did not match the handle. Release the worker and close its terminal.
 
 Record the result as a ruling in `.orchestrator/state.md`. Only `run_legacy_local` and an empty worker list mean the orchestration layer has never been used in this project.
 
@@ -173,4 +184,6 @@ Record the result as a ruling in `.orchestrator/state.md`. Only `run_legacy_loca
 - Two writers on the same files, in any harness.
 - `dispatch --inject` (it leaves the process unsupervised), `terminal close` in place of `worker-release`, and `orchestration reset` during active coordination.
 - Claiming a worker is dead, or retrying it, from absence alone.
+- Starting services (Docker, a database, a dev server) inside a worker's terminal. Releasing the worker closes its terminal and what runs in it: one release closed Docker Desktop and took the database down. Start shared services yourself, outside the workers.
+- Editing files inside a builder's worktree while it works. Its `Stop` check restores them. Edit stories in your own checkout, after the release.
 - Opening a browser — Orca's embedded browser included — unless the brief or the human allows it. The `ui` key in `.orchestrator.json` is the human's permission for the UI check, and only for it.

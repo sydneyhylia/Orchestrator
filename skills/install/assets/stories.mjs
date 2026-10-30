@@ -57,6 +57,8 @@ const RELEASES = config.releases;
 const MAIN_RELEASE = config.mainRelease ?? RELEASES[0];
 const PERSONAS = config.personas ?? null;
 const RESULTS = path.join(DIR, ".test-results");
+// Last known result of every test that ran (passed or failed), kept across runs that do not run it.
+const LAST = path.join(DIR, ".test-last.json");
 const MAP = path.join(DIR, "map.md");
 const SCRIPT = path.relative(ROOT, path.join(DIR, "stories.mjs")).split(path.sep).join("/");
 const fill = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? `{${k}}`);
@@ -220,12 +222,12 @@ if (flag("--tests")) {
   if (!existsSync(RESULTS)) { console.error("The test command wrote no report. Check tests.command and its {report} placeholder."); process.exit(2); }
 }
 
-function loadResults() {
-  if (!existsSync(RESULTS)) return null;
-  const raw = lf(readFileSync(RESULTS, "utf8"));
-  const cwd = path.resolve(ROOT, T?.cwd ?? ".");
-  const norm = (p) => path.relative(cwd, path.resolve(cwd, p)).split(path.sep).join("/");
-  if ((T?.format ?? "jest-json") === "junit") {
+const cwd = path.resolve(ROOT, T?.cwd ?? ".");
+const norm = (p) => path.relative(cwd, path.resolve(cwd, p)).split(path.sep).join("/");
+
+function parseReport(file, junit) {
+  const raw = lf(readFileSync(file, "utf8"));
+  if (junit) {
     const cases = [];
     // Attribute values may hold a raw '>' (Node's reporter does not escape it): skip quoted strings whole.
     for (const m of raw.matchAll(/<testcase\b((?:[^>"]|"[^"]*")*?)(\/>|>([\s\S]*?)<\/testcase>)/g)) {
@@ -238,8 +240,30 @@ function loadResults() {
     return cases;
   }
   let report;
-  try { report = JSON.parse(raw); } catch { errors.push(`${path.basename(RESULTS)} is not valid JSON: run with --tests again.`); return null; }
+  try { report = JSON.parse(raw); } catch { errors.push(`${path.basename(file)} is not valid JSON: run with --tests again.`); return []; }
   return report.testResults.flatMap((f) => f.assertionResults.map((t) => ({ file: norm(f.name), title: t.title, status: t.status })));
+}
+
+function loadResults() {
+  // tests.reports: extra report files (e.g. e2e) merged with the main one; the format is read from the content.
+  const extra = asList(T?.reports).map((p) => path.resolve(cwd, p)).filter((p) => existsSync(p));
+  const last = existsSync(LAST) ? readJson(LAST) : [];
+  if (!existsSync(RESULTS) && !extra.length && !last.length) return null;
+  const cases = [
+    ...(existsSync(RESULTS) ? parseReport(RESULTS, (T?.format ?? "jest-json") === "junit") : []),
+    ...extra.flatMap((p) => parseReport(p, readFileSync(p, "utf8").trimStart().startsWith("<"))),
+  ];
+  // A test absent from the reports, or skipped, did not run this time: keep its last known result.
+  // A report cannot tell a test skipped by its own code from one filtered out, so both count as not run.
+  const ran = (t) => t.status === "passed" || t.status === "failed";
+  const key = (t) => `${t.file}\0${t.title}`;
+  const ranNow = new Set(cases.filter(ran).map(key));
+  const skippedNow = new Set(cases.filter((t) => !ran(t)).map(key));
+  const known = new Set(last.map(key));
+  return [
+    ...cases.filter((t) => ran(t) || !known.has(key(t))),
+    ...last.filter((t) => !ranNow.has(key(t))).map((t) => (skippedNow.has(key(t)) ? { ...t, notRun: true } : t)),
+  ];
 }
 const tests = loadResults();
 
@@ -254,6 +278,7 @@ function testResult(c) {
     ? tests.filter((t) => sameFile(c.ref.file, t.file)).filter((t) => pattern.test(t.title))
     : [];
   if (!matches.length) return "notFound";
+  c.notRun = matches.some((t) => t.notRun);
   if (matches.some((t) => t.status === "failed")) return "fail";
   return matches.every((t) => t.status === "passed") ? "pass" : "skipped";
 }
@@ -264,7 +289,8 @@ for (const s of stories) {
   for (const c of s.criteria) {
     if (c.kind !== "test") continue;
     c.result = testResult(c);
-    if (c.result === "notFound") errors.push(`${s.file}: no test found for ${c.id}.`);
+    // No result now nor before: the test has not run yet, or the marker names a test that does not exist.
+    if (c.result === "notFound") warnings.push(`${s.file}: no test result for ${c.id} (not run yet, or no such test).`);
   }
   const kinds = s.criteria.map((c) => (c.kind === "test" ? ({ pass: "ok", fail: "failing" }[c.result] ?? "unverified") : c.kind === "manual" ? "ok" : c.kind));
   const openDecisions = s.blockedBy.filter((d) => decisions.get(d)?.open);
@@ -409,15 +435,17 @@ out.push(`## ${X.legend}`, "", ...STATUS_ORDER.map((e) => `- ${L.statuses[e]}`),
 const md = out.join("\n");
 
 if (flag("--check")) {
-  // The main release must be green: a failing or skipped criterion fails the check, not only a stale map.
+  // The main release must be green: a failing criterion fails the check, not only a stale map.
+  // A skipped test did not run this time: it warns, and the criterion keeps its last known result.
   for (const s of main) for (const c of s.criteria) {
     if (c.kind === "failing") errors.push(`${s.file}: ${c.id} is marked failing in ${MAIN_RELEASE}.`);
     else if (c.result === "fail") errors.push(`${s.file}: the test for ${c.id} fails.`);
-    else if (c.result === "skipped") errors.push(`${s.file}: the test for ${c.id} is skipped.`);
+    else if (c.result === "skipped" || c.notRun) warnings.push(`${s.file}: the test for ${c.id} is skipped${c.notRun ? " (last known result kept)" : ""}.`);
   }
 }
 
 if (errors.length) { console.error(`\n${errors.length} problem(s):`); for (const e of errors) console.error("  - " + e); }
+if (warnings.length) { console.error(`\n${warnings.length} warning(s):`); for (const w of warnings) console.error("  - " + w); }
 if (runnerCode) console.error(`\nThe test command exited with code ${runnerCode}.`);
 
 if (flag("--check")) {
@@ -427,6 +455,7 @@ if (flag("--check")) {
   console.log("map.md is up to date.");
 } else {
   writeFileSync(MAP, md);
+  if (tests) writeFileSync(LAST, JSON.stringify(tests.filter((t) => t.status === "passed" || t.status === "failed").map(({ file, title, status }) => ({ file, title, status })), null, 1) + "\n");
   console.log(`map.md written: ${stories.length} stories, ${MAIN_RELEASE} ${ok}/${main.length} (${pct} %).`);
   if (errors.length) process.exit(1);
   if (runnerCode) process.exit(runnerCode);

@@ -23,11 +23,12 @@ You are a builder. Your name and scope are in the brief (for example `builder-AC
 3. **A test counts only when an assertion observes the behaviour in the criterion.** Snapshot-only, "does not throw", mock-was-called and source-text assertions do not count.
 4. **Locked tests are not yours.** Tests listed in `.orchestrator/locked-tests.txt` are locked. If one is wrong, report it. Never skip, weaken or delete any acceptance test to get green.
 5. **Do not edit story files.** The orchestrator updates the markers. Report what changed.
-6. **Stay in scope.** Edit only the paths the brief allows. Respect the story's out-of-scope section. Do not add features, refactors or "improvements" nobody asked for.
+6. **Stay in scope.** Edit only the paths the brief allows. Respect the story's out-of-scope section. Do not add features, refactors or "improvements" nobody asked for. A defect that predates the story goes under Concerns with `file:line`; fix it only when the story's change touches the same lines.
 7. **Both halves of a seam change together.** The seams are listed in `.orchestrator.json`.
 8. **Do not launch subagents.** Do not commit unless the brief says so. Never push.
-9. **Green means the project's verification commands pass**, run by you, with output. "It should work" is not evidence.
-10. **UI check, only when the brief says so.** After green, open `ui.devUrl` from `.orchestrator.json` in the browser the brief names. Exercise each UI criterion with `ui.testData`, read the console, and save one screenshot per criterion under `.orchestrator/work/<scope>/ui/`. When `ui.writesProduction` is true, create and change only that test data. The check gives evidence; the criterion's marker stays for the human's acceptance.
+9. **Green means the project's verification commands pass**, run by you, with output. "It should work" is not evidence. Run the fast set (`verify.onBuilderStop`) while you work; the full set runs once, at the orchestrator's close or in CI. Paste the output: reviewers rely on it instead of running it again.
+10. **Do not start shared services** (Docker, a database, a long-running dev server) in your terminal. Releasing you closes them. If the work needs one that is not running, report BLOCKED and name it.
+11. **UI check, only when the brief says so.** After green, open `ui.devUrl` from `.orchestrator.json` in the browser the brief names. Exercise each UI criterion with `ui.testData`, read the console, and save one screenshot per criterion under `.orchestrator/work/<scope>/ui/`. When `ui.writesProduction` is true, create and change only that test data. The check gives evidence; the criterion's marker stays for the human's acceptance.
 
 ## Stop and report BLOCKED instead of improvising when
 
