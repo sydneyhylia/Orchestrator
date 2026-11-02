@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// orchestrator guard. Claude Code hook for SessionStart, PreToolUse and SubagentStop.
+// orchestrator guard. Claude Code hook for SessionStart, PreToolUse, PostToolUse, PostToolUseFailure,
+// SubagentStop and Stop.
 // Inert unless the repository has .orchestrator.json at its root.
 // Exit 0 = allow. Exit 2 = block; stderr goes back to Claude. Exit 0 with permissionDecision "ask" on
 // stdout = Claude Code asks the human to confirm.
@@ -235,32 +236,46 @@ function checkPaths(tokens, dir, removes = false) {
 const breakerPath = path.join(root, STATE, "work", "breaker.json");
 const maxSameFailure = config.verify?.maxSameFailure ?? 3;
 const commandKey = (c) => String(c ?? "").replace(/\s+/g, " ").trim();
-// A subagent run is its agent_id; an Orca worker is its own session, and each fix round is a fresh one.
-const runId = String(input.agent_id ?? input.session_id ?? "");
-// Searches and comparisons exit 1 when they find nothing: that is an answer, not a failure.
+// A subagent run is its agent_id, never the session it runs in; an Orca worker is its own session, and
+// each fix round is a fresh one.
+const runId = String((input.agent_type ? input.agent_id : input.session_id) ?? "");
+// Searches and comparisons exit 1 when they find nothing: that is an answer, not a failure. A command
+// line exits with its last command, so that one decides. `rtk test <cmd>` wraps a real command.
 const isProbe = (c) => {
-  const t = (commands(c)[0] ?? []).filter((x) => !/^(rtk|sudo|command|env|time)$/i.test(x) && !/^\$?(env:)?[A-Za-z_]\w*=/.test(x));
+  let t = commands(c).at(-1) ?? [];
+  if (/^rtk$/i.test(t[0] ?? "") && /^(test|err|summary|proxy)$/i.test(t[1] ?? "")) t = t.slice(2);
+  t = t.filter((x) => !/^(rtk|sudo|command|env|time)$/i.test(x) && !/^\$?(env:)?[A-Za-z_]\w*=/.test(x));
   return /^(grep|egrep|fgrep|rg|findstr|select-string|sls|test|\[|\[\[|diff|cmp|fc)$/i.test(t[0] ?? "")
-    || (isGit(t[0] ?? "") && t.some((x) => /^(--quiet|--exit-code|-q)$/.test(x)));
+    || (isGit(t[0] ?? "") && /^(diff|grep|rev-parse|ls-files|show-ref|merge-base|cat-file|check-ignore|config)$/i.test(t.find((x, i) => i > 0 && !x.startsWith("-")) ?? ""));
 };
 function readBreaker() { try { return JSON.parse(stripBom(readFileSync(breakerPath, "utf8"))); } catch { return {}; } }
-function writeBreaker(b) {
+// Only this run is kept: parallel builders work in their own worktrees, each with its own file.
+function writeBreaker(mine) {
   mkdirSync(path.dirname(breakerPath), { recursive: true });
   const tmp = `${breakerPath}.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(b, null, 2));
+  writeFileSync(tmp, JSON.stringify({ failures: { [runId]: mine } }, null, 2));
   renameSync(tmp, breakerPath);
 }
+const breakerOn = () => isRole("builder") && ["Bash", "PowerShell"].includes(input.tool_name) && maxSameFailure > 0 && runId;
 
 // Durations, counts and line numbers change from one attempt to the next; the failure itself does not.
 if (input.hook_event_name === "PostToolUseFailure") {
-  if (!isRole("builder") || !["Bash", "PowerShell"].includes(input.tool_name) || input.is_interrupt || maxSameFailure <= 0 || !runId) process.exit(0);
+  if (!breakerOn() || input.is_interrupt) process.exit(0);
   const cmd = commandKey(input.tool_input?.command);
   if (isProbe(cmd)) process.exit(0);
   const signature = createHash("sha1").update(String(input.error ?? "").replace(/\d+/g, "#").replace(/\s+/g, " ").trim()).digest("hex").slice(0, 12);
-  const b = readBreaker();
-  const mine = ((b.failures ??= {})[runId] ??= {});
+  const mine = readBreaker().failures?.[runId] ?? {};
   mine[cmd] = { signature, times: mine[cmd]?.signature === signature ? mine[cmd].times + 1 : 1 };
-  writeBreaker(b);
+  writeBreaker(mine);
+  process.exit(0);
+}
+
+// A success breaks the row.
+if (input.hook_event_name === "PostToolUse") {
+  if (!breakerOn()) process.exit(0);
+  const cmd = commandKey(input.tool_input?.command);
+  const mine = readBreaker().failures?.[runId];
+  if (mine?.[cmd]) { delete mine[cmd]; writeBreaker(mine); }
   process.exit(0);
 }
 

@@ -271,7 +271,8 @@ const sameFile = (a, b) => { const [x, y] = a.length >= b.length ? [a, b] : [b, 
 
 function testResult(c) {
   if (!tests) return "noResults";
-  const byId = tests.filter((t) => t.title.startsWith(`[${c.id}]`));
+  // A pin ("[ID] unchanged: ...") keeps old behaviour; it never proves the criterion.
+  const byId = tests.filter((t) => t.title.startsWith(`[${c.id}]`) && !/^\[[^\]]+\]\s*unchanged\b/i.test(t.title));
   // Parameterised tests (it.each) report %s, %d... substituted: treat them as wildcards.
   const pattern = c.ref && new RegExp("^" + c.ref.title.split(/%[sdifjo#%]/).map(escape).join(".*") + "$");
   const matches = byId.length ? byId : c.ref
@@ -456,9 +457,11 @@ function staleContextRefs() {
         }
         for (const token of tokens) {
           const p = token.replace(/[,;:)]+$/, "");
-          // Only paths whose first folder exists here: origin/main or a URL is not a path of this repo.
-          if (!p.includes("/") || !PATHLIKE.test(p) || !existsSync(path.join(ROOT, p.split("/")[0]))) continue;
-          if (existsSync(path.join(ROOT, p)) || git(["check-ignore", "-q", p]) !== null) continue;
+          // A doc names paths from its own folder or from the repo root. Only paths whose first folder
+          // exists in one of them count: origin/main or a URL is not a path of this repo.
+          const bases = [...new Set([path.dirname(path.join(ROOT, doc)), ROOT])].filter((b) => existsSync(path.join(b, p.split("/")[0])));
+          if (!p.includes("/") || !PATHLIKE.test(p) || !bases.length) continue;
+          if (bases.some((b) => existsSync(path.join(b, p)) || git(["check-ignore", "-q", path.relative(ROOT, path.join(b, p))]) !== null)) continue;
           stale.push(`${doc}:${i + 1}: names ${p}, which does not exist. Fix the text.`);
         }
       }
