@@ -60,7 +60,7 @@ Copy `assets/orchestrator.json` to the repo root as `.orchestrator.json` and fil
 5. Write `<storiesDir>/templates/story.md` and `templates/decision.md`: the plugin templates from `skills/stories/templates/`, translated into the project's language. Keep the frontmatter keys in English.
 6. Write `<storiesDir>/README.md` from `assets/stories-readme.md`, translated.
 7. Create `<storiesDir>/stories/` and `<storiesDir>/decisions/`.
-8. Add `<storiesDir>/.test-results` to `.gitignore`. Keep `<storiesDir>/.test-last.json` tracked: it holds the last result of every test that ran, so a run without some tests keeps their results, and every machine builds the same map. When the project runs a second suite on its own (for example end-to-end), list its report file under `tests.reports` in `stories.config.json`.
+8. Add `<storiesDir>/.test-results` to `.gitignore`. Keep `<storiesDir>/.test-last.json` tracked: it holds the last result of every test that ran, so a run without some tests keeps their results, and every machine builds the same map. When the project runs a second suite on its own (for example end-to-end), list its report file under `tests.reports` in `stories.config.json`. Set `contextDocs` there to the files every session reads (`["CLAUDE.md", "<storiesDir>/README.md"]`): `--check` then fails when they name a path or a package script that does not exist. Run `--check` once and fix what it finds before you keep the key.
 9. Run `node <storiesDir>/stories.mjs --tests`. It must run clean on the empty folder. Use `--tests` here: a map generated without it says "no results", and the `--tests --check` in step 6 and CI then reports it stale.
 
 All files the project reads are in one language: the project's.

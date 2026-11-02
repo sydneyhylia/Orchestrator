@@ -10,7 +10,7 @@
 //
 // Configuration: stories.config.json next to this file.
 
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -434,7 +434,41 @@ if (decisions.size) {
 out.push(`## ${X.legend}`, "", ...STATUS_ORDER.map((e) => `- ${L.statuses[e]}`), "");
 const md = out.join("\n");
 
+// ---------- Context docs: what every session reads names files and scripts that exist
+// stories.config.json → contextDocs lists them (e.g. CLAUDE.md). Without it, nothing is checked.
+const PATHLIKE = /^\.?[\w@-][\w.@-]*(\/[\w.@-]+)*\/?$/;
+function staleContextRefs() {
+  const docs = asList(config.contextDocs).filter((d) => existsSync(path.join(ROOT, d)));
+  if (!docs.length) return [];
+  const git = (a) => { try { return execFileSync("git", a, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] }).toString(); } catch { return null; } };
+  const pkgPath = path.join(ROOT, "package.json");
+  const scripts = existsSync(pkgPath) ? new Set(Object.keys(readJson(pkgPath).scripts ?? {})) : null;
+  const stale = [];
+  for (const doc of docs) {
+    lf(readFileSync(path.join(ROOT, doc), "utf8")).split("\n").forEach((line, i) => {
+      for (const m of line.matchAll(/`([^`]+)`/g)) {
+        const tokens = m[1].trim().split(/\s+/);
+        // `pnpm run x` always names a script. `pnpm x:y` does too: built-in commands have no colon.
+        const pm = /^(npm|pnpm|yarn|bun)$/.test(tokens[0]);
+        const script = !pm ? null : tokens[1] === "run" ? tokens[2] : tokens[1]?.includes(":") ? tokens[1] : null;
+        if (scripts && script && !/^[-<]/.test(script) && !scripts.has(script)) {
+          stale.push(`${doc}:${i + 1}: names \`${m[1].trim()}\`, and package.json has no script ${script}. Fix the text.`);
+        }
+        for (const token of tokens) {
+          const p = token.replace(/[,;:)]+$/, "");
+          // Only paths whose first folder exists here: origin/main or a URL is not a path of this repo.
+          if (!p.includes("/") || !PATHLIKE.test(p) || !existsSync(path.join(ROOT, p.split("/")[0]))) continue;
+          if (existsSync(path.join(ROOT, p)) || git(["check-ignore", "-q", p]) !== null) continue;
+          stale.push(`${doc}:${i + 1}: names ${p}, which does not exist. Fix the text.`);
+        }
+      }
+    });
+  }
+  return stale;
+}
+
 if (flag("--check")) {
+  errors.push(...staleContextRefs());
   // The main release must be green: a failing criterion fails the check, not only a stale map.
   // A skipped test did not run this time: it warns, and the criterion keeps its last known result.
   for (const s of main) for (const c of s.criteria) {

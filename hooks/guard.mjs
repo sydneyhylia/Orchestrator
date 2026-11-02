@@ -5,7 +5,8 @@
 // stdout = Claude Code asks the human to confirm.
 
 import { execFileSync, execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const WIN = process.platform === "win32";
@@ -86,6 +87,9 @@ const lockedPaths = existsSync(lockFile)
 const locked = new Set(lockedPaths.map(key));
 // A directory that holds a locked file: deleting or moving it takes the file with it.
 const holdsLocked = (rel) => rel === "" || [...locked].some((l) => l.startsWith(rel + "/"));
+// The guard's failure count: no agent edits it, moves it or deletes the folder that holds it.
+const BREAKER_REL = key(`${STATE}/work/breaker.json`);
+const touchesBreaker = (rel, removes) => inSubagent && (rel === BREAKER_REL || (removes && (rel === "" || BREAKER_REL.startsWith(rel + "/"))));
 const storiesRel = config.storiesDir ? key(path.join(config.storiesDir, "stories")) + "/" : null;
 const mapRel = config.storiesDir ? key(path.join(config.storiesDir, "map.md")) : null;
 
@@ -122,6 +126,7 @@ function checkFileWrite(rel, absolute) {
   if (locked.has(rel)) block(`${rel} is a locked acceptance test. Report the problem instead of changing the test; only the orchestrator unlocks it, on the product owner's request.`);
   if (rel === mapRel) block(`${rel} is generated. Change the stories and run stories.mjs instead.`);
   if (inSubagent && rel === LOCK_REL) block("subagents cannot change the locked-tests list.");
+  if (touchesBreaker(rel, false)) block(`${rel} is the guard's own record. No agent changes it.`);
   if (isRole("builder") && storiesRel && rel.startsWith(storiesRel)) block("the builder does not edit story files. Report the criterion status; the orchestrator updates the markers.");
   if (readOnlyRole && !key(absolute).includes(`/${STATE}/work/`)) block(`${agentType} is read-only. It writes only its report under .orchestrator/work/.`);
 }
@@ -218,12 +223,53 @@ function checkPaths(tokens, dir, removes = false) {
     if (locked.has(rel)) block(`${rel} is a locked acceptance test. It cannot be changed, moved or deleted.`);
     if (removes && !rel.startsWith("..") && holdsLocked(rel)) block(`${rel || "."} holds locked acceptance tests. It cannot be moved or deleted.`);
     if (inSubagent && rel === LOCK_REL) block("subagents cannot change the locked-tests list.");
+    if (touchesBreaker(rel, removes)) block(`${rel || "."} holds the guard's own record. No agent changes, moves or deletes it.`);
     if (isRole("builder") && storiesRel && rel.startsWith(storiesRel)) block("the builder does not edit story files. Report the criterion status; the orchestrator updates the markers.");
     if (rel === mapRel) block(`${rel} is generated. Change the stories and run stories.mjs instead.`);
   }
 }
 
+// ---------- The same failure in a row, inside one builder run
+// .orchestrator/work/breaker.json is the guard's own file: for each run, how many times in a row each
+// command failed with the same output. No agent edits it.
+const breakerPath = path.join(root, STATE, "work", "breaker.json");
+const maxSameFailure = config.verify?.maxSameFailure ?? 3;
+const commandKey = (c) => String(c ?? "").replace(/\s+/g, " ").trim();
+// A subagent run is its agent_id; an Orca worker is its own session, and each fix round is a fresh one.
+const runId = String(input.agent_id ?? input.session_id ?? "");
+// Searches and comparisons exit 1 when they find nothing: that is an answer, not a failure.
+const isProbe = (c) => {
+  const t = (commands(c)[0] ?? []).filter((x) => !/^(rtk|sudo|command|env|time)$/i.test(x) && !/^\$?(env:)?[A-Za-z_]\w*=/.test(x));
+  return /^(grep|egrep|fgrep|rg|findstr|select-string|sls|test|\[|\[\[|diff|cmp|fc)$/i.test(t[0] ?? "")
+    || (isGit(t[0] ?? "") && t.some((x) => /^(--quiet|--exit-code|-q)$/.test(x)));
+};
+function readBreaker() { try { return JSON.parse(stripBom(readFileSync(breakerPath, "utf8"))); } catch { return {}; } }
+function writeBreaker(b) {
+  mkdirSync(path.dirname(breakerPath), { recursive: true });
+  const tmp = `${breakerPath}.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(b, null, 2));
+  renameSync(tmp, breakerPath);
+}
+
+// Durations, counts and line numbers change from one attempt to the next; the failure itself does not.
+if (input.hook_event_name === "PostToolUseFailure") {
+  if (!isRole("builder") || !["Bash", "PowerShell"].includes(input.tool_name) || input.is_interrupt || maxSameFailure <= 0 || !runId) process.exit(0);
+  const cmd = commandKey(input.tool_input?.command);
+  if (isProbe(cmd)) process.exit(0);
+  const signature = createHash("sha1").update(String(input.error ?? "").replace(/\d+/g, "#").replace(/\s+/g, " ").trim()).digest("hex").slice(0, 12);
+  const b = readBreaker();
+  const mine = ((b.failures ??= {})[runId] ??= {});
+  mine[cmd] = { signature, times: mine[cmd]?.signature === signature ? mine[cmd].times + 1 : 1 };
+  writeBreaker(b);
+  process.exit(0);
+}
+
 if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(input.tool_name)) {
+  if (isRole("builder") && maxSameFailure > 0 && runId) {
+    const cmd = commandKey(input.tool_input?.command);
+    const failed = readBreaker().failures?.[runId]?.[cmd];
+    if (failed?.times >= maxSameFailure) block(`\`${cmd.slice(0, 200)}\` failed ${failed.times} times in a row with the same output. Do not run it again: stop and report BLOCKED with that output and what you tried.`);
+  }
   const cmds = commands(String(input.tool_input?.command ?? "").replace(/\d*>&\d/g, " "));
   // The branch check reads HEAD before the command runs, so a switch and a commit must not share a command.
   const gitSubs = cmds.filter((c) => isGit(c[0]) || isGit(c[1] ?? "")).map((c) => c.join(" ").toLowerCase());

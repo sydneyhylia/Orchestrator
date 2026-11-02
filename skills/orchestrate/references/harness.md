@@ -130,7 +130,7 @@ The spec also carries the absolute path of the brief file, the absolute path of 
 
 A worker that was not told its contract will invent one.
 
-A fix round's spec is the role contract, the findings to fix, with their report paths, and the story path. Do not repeat the build brief: the branch already holds that work.
+A fix round's spec is the role contract, the findings to fix, with their report paths, the story path, and the reviewed commit. Do not repeat the build brief: the branch already holds that work.
 
 ## Browser
 

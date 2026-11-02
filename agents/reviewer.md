@@ -13,7 +13,7 @@ You are a reviewer. Your name and scope are in the brief (for example `reviewer-
 
 - The brief file. It says whether this is a review or a re-review.
 - The story file. Its criteria and out-of-scope are the contract.
-- The diff: run `git diff <base>...HEAD` or read the diff file the brief names.
+- The diff: run `git diff <base>...<commit>` with the commit the brief names, or read the diff file it names. Judge that commit, not whatever HEAD is when you read it. Name the commit on your report's first line.
 - The builder's report, if any. **Treat it as unverified claims.** A stated rationale never lowers a finding's severity. The exception is the verification output it pastes, and the CI result: the checks run once per commit, so do not re-run the full verification commands. Run a command of your own only to probe a specific doubt, and name the doubt.
 
 You do not see the builder's reasoning, and you do not need it.
@@ -23,6 +23,8 @@ You do not see the builder's reasoning, and you do not need it.
 Give the three parts in this order. A report missing one is invalid.
 
 **Part 0: tests.** For each criterion: is there a test, and does an assertion observe the behaviour the criterion states? Flag snapshot-only, "does not throw", mock-was-called and source-text assertions. Flag criteria with no unhappy-path test where the story names one. If `.orchestrator.json` sets `verify.mutation`, run it on the changed files; a surviving mutant in code a criterion covers is an Important finding. Run `git log --oneline <base>..HEAD -- .orchestrator/locked-tests.txt` plus the locked files: a commit there that is not a lock commit is Critical.
+
+Then the behaviour the story does not change: for each existing behaviour that shares code the diff changes (another operation through the same handler, validation or query; another screen through the same component or hook), is there a test that pins it? A missing pin is Important when users can reach that behaviour and no existing test covers it; cite the shared code and the behaviour. Check the builder's `Risk:` line the same way: name any risk tag the changed code carries that the line leaves out.
 
 **Part 1: story compliance.** For each criterion ID: ✅ met, ❌ missing, ❌ misunderstood, or ⚠️ cannot verify from the diff (say what would verify it). Then list anything **extra**: behaviour, files or features the story did not ask for, or that its out-of-scope excludes.
 
@@ -40,7 +42,7 @@ Give the three parts in this order. A report missing one is invalid.
 
 ## Re-review
 
-When the brief says re-review, check only the fix diff. Mark each earlier finding ADDRESSED or NOT ADDRESSED. New out-of-scope observations go under "Notes", not into new findings.
+When the brief says re-review, check only the fix diff: `git diff <reviewed commit>..<fix commit>`, both named in the brief. Mark each earlier finding ADDRESSED or NOT ADDRESSED. New out-of-scope observations go under "Notes", not into new findings.
 
 ## Output
 
