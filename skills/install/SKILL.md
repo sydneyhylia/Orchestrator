@@ -21,12 +21,14 @@ Run `claude plugin list --json` and read the scope of `orchestrator@orchestrator
 If the scope is `user`, the plugin loads in every project on this machine. Ask the human once: "Keep orchestrator in every project, or only in this one?"
 
 - **Every project:** go to step 1.
-- **Only this one:** also ask whether the team shares it. `project` writes `.claude/settings.json`, which git shares. `local` writes `.claude/settings.local.json`, which git ignores. Then run, from the repo root:
+- **Only this one:** use `project` scope. It writes `.claude/settings.json`, which git shares, so every worktree of the repository loads the plugin, and so does every teammate. Do not use `local` in Orca: it writes `.claude/settings.local.json` in this folder only, and a worker in its own worktree would run without the guard. Use `local` only in plain Claude Code, and only when the human does not want the setting committed. Then run, from the repo root:
 
 ```
-claude plugin install orchestrator@orchestrator-local --scope <project|local>
+claude plugin install orchestrator@orchestrator-local --scope project
 claude plugin uninstall orchestrator@orchestrator-local --scope user
 ```
+
+Commit `.claude/settings.json` with the install.
 
 Tell the human to restart the CLI after the install, and continue with step 1.
 

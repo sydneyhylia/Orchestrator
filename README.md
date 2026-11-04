@@ -31,26 +31,28 @@ Open Claude Code in the project and run:
 Claude Code confirms the marketplace, shows what the plugin adds, and asks where to install it:
 
 - **user scope:** you, in every project on this machine;
-- **project scope:** everyone who works in this repository;
-- **local scope:** you, in this repository only.
+- **project scope:** everyone who works in this repository, in every checkout of it;
+- **local scope:** you, in this folder only.
+
+**With Orca, choose project or user scope.** Local scope belongs to one folder. Orca puts each writer in a worktree, which is another folder, so a worker there would run without the plugin: no guard, no skills. Project scope lives in the committed `.claude/settings.json`, so every worktree of the repository has it.
 
 This form needs Claude Code 2.1.275 or later. On older versions, run `/plugin marketplace add sydneyhylia/Orchestrator`, then `/plugin install orchestrator@orchestrator-local`. Both open the same scope choice.
 
-From your shell, for scripts, name the scope. Without `--scope` the shell installs at user scope, in every project:
+From your shell, for scripts, name the scope. Without `--scope` the shell installs at user scope, in every project. Run these from the project's folder:
 
 ```
-claude plugin marketplace add sydneyhylia/Orchestrator --scope local
-claude plugin install orchestrator@orchestrator-local --scope local
+claude plugin marketplace add sydneyhylia/Orchestrator
+claude plugin install orchestrator@orchestrator-local --scope project
 ```
 
-`/orchestrator:install` asks again when it finds the plugin at user scope.
+A marketplace is only a catalogue: declaring it loads nothing. `/orchestrator:install` asks again when it finds the plugin at user scope.
 
 From a local clone of this folder:
 
 ```
-claude plugin validate .
-claude plugin marketplace add .
-claude plugin install orchestrator@orchestrator-local --scope local
+claude plugin validate ./
+claude plugin marketplace add ./
+claude plugin install orchestrator@orchestrator-local --scope project
 ```
 
 To try it without installing: `claude --plugin-dir <path to this folder>`.

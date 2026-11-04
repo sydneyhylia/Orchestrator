@@ -11,6 +11,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import path from "node:path";
 
 const WIN = process.platform === "win32";
+// Windows and a default macOS volume (APFS) ignore case: Tests/a.test.js and tests/a.test.js are one file.
+const FOLD = WIN || process.platform === "darwin";
 const stripBom = (s) => s.replace(/^﻿/, "");
 const input = JSON.parse(stripBom(readFileSync(0, "utf8")) || "{}");
 const cwd = input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
@@ -78,7 +80,7 @@ const isRole = (r) => new RegExp(`(^|:)${r}$`).test(agentType);
 const readOnlyRole = typeof declared?.readOnly === "boolean" ? declared.readOnly : ["reviewer", "researcher", "designer"].some(isRole);
 
 // Paths are compared repo-relative, so a worktree copy of a locked file matches too.
-const key = (p) => { const k = p.split(path.sep).join("/").replace(/^\.\//, ""); return WIN ? k.toLowerCase() : k; };
+const key = (p) => { const k = p.split(path.sep).join("/").replace(/^\.\//, ""); return FOLD ? k.toLowerCase() : k; };
 const relTo = (base, p) => key(path.relative(base, path.resolve(base, p)));
 const LOCK_REL = key(`${STATE}/locked-tests.txt`);
 const lockFile = path.join(root, STATE, "locked-tests.txt");
@@ -143,17 +145,22 @@ if (input.hook_event_name === "PreToolUse" && ["Edit", "Write", "MultiEdit", "No
 
 // ---------- PreToolUse: shell commands
 
-// Split a command line into simple commands. Quoted text is kept apart: it is checked
-// as a command of its own only when it is itself a git or shell call (bash -c "git push").
+// Split a command line into simple commands. Quoted text is kept apart: it is checked as a command
+// of its own when it is itself a git or shell call, or the script a shell runs (bash -c "...").
 function commands(line) {
   const quoted = [];
   const bare = line.replace(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g, (_, d, s) => { quoted.push(d ?? s); return ` __Q${quoted.length - 1}__ `; });
+  const scripts = new Set([...bare.matchAll(/(?:^|[\s\\/;&|(])(?:bash|sh|zsh|pwsh|powershell|cmd)(?:\.exe)?\s+(?:-\w*c|-command|\/c)\s+__Q(\d+)__/gi)].map((m) => +m[1]));
   const out = [];
   for (const seg of bare.split(/&&|\|\||;|\||\n|\$\(|`|\(|\)/)) {
     const tokens = seg.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length) out.push(tokens.map((t) => t.replace(/__Q(\d+)__/g, (_, i) => quoted[i])));
+    // .bare keeps the quotes out: a > inside a quoted argument is text, not a redirection.
+    const restore = (t) => t.replace(/__Q(\d+)__/g, (_, i) => quoted[i]);
+    if (tokens.length) out.push(Object.assign(tokens.map(restore), { bare: tokens, restore }));
   }
-  for (const q of quoted) if (/^\s*(\S*[\\/])?git(\.exe)?\s/i.test(q) || /^\s*(bash|sh|pwsh|powershell)\b/i.test(q)) out.push(...commands(q));
+  quoted.forEach((q, i) => {
+    if (scripts.has(i) || /^\s*(\S*[\\/])?git(\.exe)?\s/i.test(q) || /^\s*(bash|sh|pwsh|powershell)\b/i.test(q)) out.push(...commands(q));
+  });
   return out;
 }
 
@@ -322,8 +329,8 @@ if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(in
       if (git.allowPush === false) confirm("git.allowPush is false in this project, so every merge needs the product owner's confirmation.");
     }
     // Redirections write too: split "x>file" and "> file" into their own tokens.
-    const split = tokens.flatMap((t) => t.split(/(>>?)/)).filter(Boolean);
-    const redirTargets = split.filter((t, i) => i > 0 && /^>>?$/.test(split[i - 1]));
+    const split = (raw.bare?.slice(s) ?? tokens).flatMap((t) => t.split(/(>>?)/)).filter(Boolean);
+    const redirTargets = split.filter((t, i) => i > 0 && /^>>?$/.test(split[i - 1])).map((t) => raw.restore?.(t) ?? t);
     if (WRITERS.test(tokens[0])) checkPaths(tokens.slice(1), cwd);
     if (REMOVERS.test(tokens[0])) checkPaths(/^(mv|move|move-item|mi)$/i.test(tokens[0]) ? tokens.slice(1, -1) : tokens.slice(1), cwd, true);
     if (redirTargets.length) checkPaths(redirTargets, cwd);
@@ -348,7 +355,7 @@ if (input.hook_event_name === "SubagentStop" || input.hook_event_name === "Stop"
   // Content, not command shape: whatever tool changed a locked file, the story files or the lock
   // list, the difference from HEAD shows it. This check ignores stop_hook_active: the builder
   // restores the files (git restore <file>) or stops for good only by reporting BLOCKED.
-  const spec = (list) => list.map((p) => (WIN ? `:(icase)${p}` : p));
+  const spec = (list) => list.map((p) => (FOLD ? `:(icase)${p}` : p));
   const lockSet = spec([...lockedPaths, `${STATE}/locked-tests.txt`]);
   const run = (a) => { try { return execFileSync("git", a, { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return ""; } };
   const names = (a) => run(a).split(/\r?\n/).filter(Boolean);
