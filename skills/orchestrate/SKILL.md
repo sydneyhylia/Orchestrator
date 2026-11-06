@@ -87,7 +87,7 @@ In Orca the report arrives as a message, not as a return value: `references/harn
 
 Rules:
 - "Done" without evidence is not done. Evidence is command output or a test result.
-- A builder's report names its pins and its risk. Each pin passed before the change and after. A change to shared code with no pin needs a reason that holds. When the `Risk:` line names a tag the story lacks, add the tag to the story, and its reviewer with it.
+- Builders test only the feature: one acceptance test per criterion, plus its error case. A builder's report names the existing tests that cover shared code, what stays uncovered, and its risk. Uncovered shared code goes to the human at close; it never adds a test round. When the `Risk:` line names a tag the story lacks, add the tag to the story, and its reviewer with it.
 - Reject a review that lacks either verdict.
 - Reject a finding that contradicts the story or the human's instructions. Write down why in the review file.
 - Read the file the agent wrote when the summary is not enough. Do not redo the work in your own context.

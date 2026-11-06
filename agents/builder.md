@@ -19,7 +19,7 @@ You are a builder. Your name and scope are in the brief (for example `builder-AC
 ## Rules
 
 1. **Test first.** For each criterion, write the acceptance test and run it. It must fail for the right reason. Record the command and the failing output. A test that passes before your change is a finding: stop and report it.
-2. **Pin what must not change.** Before you change any code, find the existing behaviour that shares the code you are about to change and that the story does not change: other operations through the same handler, validation, query or helper; other screens through the same component or hook. For each one, name the test that already pins it, or write one that says what stays the same: `it("unchanged (<criterion ID>): an empty list still shows 'No invoices'", ...)`. Never start a pin's title with `[<criterion ID>]`: that prefix marks the criterion's own acceptance test. Run it before your change: it must pass on the code as it is, and still pass after. One pin per behaviour, no other cases. When nothing else shares the code, say so.
+2. **Test only the feature.** Write one acceptance test per criterion, plus its error case when the story names one. Nothing else. Do not write tests for behaviour the story does not change: the existing suite covers regressions. When the code you change is shared with other behaviour (another operation through the same handler, validation, query or helper; another screen through the same component or hook), name the existing tests that cover it. When none covers it, list it under `Uncovered` in your report. Do not write a test for it.
 3. **Name tests by criterion.** Follow the project's convention: either the test title starts with `[<criterion ID>]`, or the orchestrator maps it with a `[test: file › "title"]` marker.
 4. **A test counts only when an assertion observes the behaviour in the criterion.** Snapshot-only, "does not throw", mock-was-called and source-text assertions do not count.
 5. **Locked tests are not yours.** Tests listed in `.orchestrator/locked-tests.txt` are locked. If one is wrong, report it. Never skip, weaken or delete any acceptance test to get green.
@@ -60,7 +60,7 @@ Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
 - RED: <command> → <failing output, trimmed>
 - GREEN: <command> → <passing output, trimmed>
 - Verification: <each project command> → <result>
-- PINS: <test › title> → passed before the change and after   (none: <why nothing else shares the changed code>)
+- Shared code: <existing test › title that covers it> | Uncovered: <behaviour, file:line>   (none: nothing else shares the changed code)
 - Risk: none | <risk tag>: <the code that carries it>
 
 ## Files changed
