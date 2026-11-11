@@ -77,7 +77,11 @@ const agentType = String(input.agent_type ?? "") || String(declared?.role ?? "")
 const inSubagent = Boolean(agentType);
 const isRole = (r) => new RegExp(`(^|:)${r}$`).test(agentType);
 // A worker's role file says whether it may write. A subagent is also held by its own tools list.
-const readOnlyRole = typeof declared?.readOnly === "boolean" ? declared.readOnly : ["reviewer", "researcher", "designer"].some(isRole);
+// Without a role file, .orchestrator.json → roles.<name>.readOnly decides, then the plugin's own roles.
+const configReadOnly = config.roles?.[agentType.replace(/^.*:/, "")]?.readOnly;
+const readOnlyRole = typeof declared?.readOnly === "boolean" ? declared.readOnly
+  : typeof configReadOnly === "boolean" ? configReadOnly
+  : ["reviewer", "researcher", "designer"].some(isRole);
 
 // Paths are compared repo-relative, so a worktree copy of a locked file matches too.
 const key = (p) => { const k = p.split(path.sep).join("/").replace(/^\.\//, ""); return FOLD ? k.toLowerCase() : k; };
@@ -323,6 +327,12 @@ if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(in
       if (tokens[1] === "orchestration" && tokens[2] === "worker-start" && tokens.includes("--agent")) block(`launch the worker's terminal yourself with \`orca terminal create --command "claude ${want}"\`, then \`worker-start --terminal <handle>\`. --agent uses Orca's default arguments.`);
       const cmd = tokens[tokens.indexOf("--command") + 1] ?? "";
       if (tokens[1] === "terminal" && tokens[2] === "create" && /(^|[;&|]\s*)claude\b/i.test(cmd) && !cmd.includes(want)) block(`start the worker in ${from}: --command "claude ${want}".`);
+    }
+    // dispatch.mjs opens the terminal itself, out of the guard's sight: hold its --mode to the same rule.
+    if (/^node(\.exe)?$/i.test(tokens[0]) && /orchestrate[\\/]scripts[\\/]dispatch\.mjs$/i.test(tokens[1] ?? "")) {
+      if (inSubagent) block("role agents do not dispatch workers. Report what you need to the orchestrator.");
+      const given = tokens[tokens.indexOf("--mode") + 1];
+      if (!config.orca?.workerPermissionMode && workerMode && tokens.includes("--mode") && cliMode(given) !== workerMode) block(`dispatch workers in this session's mode: --mode ${workerMode}.`);
     }
     if (/^gh$/i.test(tokens[0]) && /^pr$/i.test(tokens[1] ?? "") && /^merge$/i.test(tokens[2] ?? "")) {
       if (inSubagent) block("role agents never merge. The product owner merges, or asks the orchestrator to.");

@@ -14,7 +14,7 @@ The plugin is inert in projects without `.orchestrator.json`. In projects with i
 
 | Path | What it is |
 |---|---|
-| `skills/orchestrate/` | The orchestrator's operating procedure, harness detection, git rules |
+| `skills/orchestrate/` | The orchestrator's operating procedure, harness detection, git rules, and `scripts/dispatch.mjs`, which launches an Orca worker in one command |
 | `skills/stories/` | How to write, split and maintain stories; English templates |
 | `skills/install/` | Adapts the plugin to one project; assets copied into the project |
 | `agents/` | The role contracts |

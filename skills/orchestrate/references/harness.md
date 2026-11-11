@@ -85,6 +85,22 @@ A fresh worker means a fresh terminal, not a new Git worktree.
 
 ### Launch: the worker mode, not Orca's default
 
+Use the script in this skill's folder. Run it from the project root. It runs every step below in order:
+
+```
+node <this skill's directory>/scripts/dispatch.mjs --role <role> --scope <scope> --brief <brief.md> --worktree <current | branch:<branch>> --run <run id> [--mode <your mode>] [--read-only] [--close-shells] [--keep-open] [--terminal <handle>] [--dry-run]
+```
+
+- The script prints `{ title, handle, dispatchId, workspace, roleFile }`. Write the dispatch id in the ledger.
+- The script refuses a writer on `current`, a read-only role in a worktree, and a second worker with the same role and scope. It finds that worker by its role file: Claude renames its own tab, so the title cannot tell.
+- `.orchestrator.json` → `roles.<name>.readOnly` decides whether a role writes. The plugin's roles have defaults: `builder` and `copywriter` write; `reviewer`, `researcher` and `designer` read. A project role that is not declared there is refused. `--read-only` makes a writing role read-only for one dispatch, for example a reviewing `copywriter`.
+- Pass `--mode` with your own session's mode when `orca.workerPermissionMode` is not set. The guard checks that mode.
+- Pass `--close-shells` only in a worktree you created for this writer.
+- When the script stops at a prompt, it names the terminal. Take the prompt to the human. After the human answers, rerun the same command with `--terminal <handle>`.
+- The brief goes from its file through `--spec-file`, so a multi-line spec needs no shell quoting.
+
+Run the steps below by hand only when the script cannot run them, for example on a remote server. Lessons from 2026-11-11 (Orca 1.4.250, Windows): a regex without spaces missed the `"handle": "…"` in the JSON of `terminal create`, so the command ran again and left empty sessions. A `path:` worktree selector failed where `branch:` worked.
+
 `worker-start --agent claude` launches Claude with Orca's default arguments for new agent tabs, which the project does not control. So launch the terminal yourself and dispatch into it. The worker mode is `orca.workerPermissionMode` in `.orchestrator.json` when set (for example `bypassPermissions`), otherwise the permission mode your own session runs in. The guard blocks `worker-start --agent` and a `claude` terminal in any other mode, and its message names the mode:
 
 ```
@@ -110,7 +126,7 @@ If the wait reports a `blockedReason`, read the terminal and take the prompt to 
 
 ## The brief is the spec
 
-Orca requires a **self-contained** spec: the injected preamble is all the worker starts with, and a worker in another workspace cannot read your ignored files by relative path. So pass the §4 brief **inline** as `--spec`, and keep writing it to `.orchestrator/work/<scope>/brief.md` as the durable record.
+Orca requires a **self-contained** spec: the injected preamble is all the worker starts with, and a worker in another workspace cannot read your ignored files by relative path. So write the §4 brief to `.orchestrator/work/<scope>/brief.md` as the durable record, and pass that file as the spec (`--spec-file`, which `dispatch.mjs` uses). The worker receives the file's text, so the text must stand on its own.
 
 | Orca spec field | §4 brief line |
 |---|---|

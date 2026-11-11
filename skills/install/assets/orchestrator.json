@@ -15,6 +15,7 @@
   "riskTags": ["production", "legal", "security", "costs"],
   "copy": { "master": "{{COPY_MASTER_DOC}}", "rules": "{{VOICE_RULES_FILE_OR_SKILL}}" },
   "design": "{{DESIGN_SOURCE: design file link, design-system docs}}",
+  "roles": { "{{OPTIONAL: each project role, e.g. auditor}}": { "readOnly": "{{true if it only judges or reads}}" } },
   "orca": { "workerPermissionMode": "{{OPTIONAL: the mode Orca workers launch in, e.g. bypassPermissions; remove to use the orchestrator's own mode}}" },
   "git": {
     "protectedBranches": ["main", "master"],

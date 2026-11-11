@@ -28,6 +28,17 @@ Two decisions, in this order: **who** does it, then **through which mechanism**.
 
 A human ruling can change the mechanism, for example "no commits", which keeps writers out of their own worktrees. When you ask for one, name what the human loses: "the builder runs as a subagent, with no terminal you can watch". Write the ruling with its scope. It expires at the end of the block of work; ask again at the next block. It never moves read-only roles: in Orca they stay visible workers.
 
+In Orca, the mechanism follows from the work:
+
+| The work | Mechanism | Where |
+|---|---|---|
+| Trivial or coupled: a merge, a criterion's text, locking tests, a one-file fix | You, directly | Your checkout, or a branch's worktree with `git -C <literal path>` |
+| Writes: `builder`, a writing `copywriter`, a project role with `readOnly: false` | A supervised worker | The worktree of its branch. A new worktree only for a new branch |
+| Judges or reads: `reviewer`, `researcher`, `designer`, a project role with `readOnly: true` | A supervised worker | `current`, no worktree |
+| A short lookup only you need | The Agent tool | Your session |
+
+Launch every supervised worker with `scripts/dispatch.mjs` from this skill's folder (`references/harness.md`, **Launch**).
+
 Ask in this order. Stop at the first match.
 
 1. **Is it trivial?** One-line fix, rename, lookup → do it directly.
@@ -55,7 +66,7 @@ Name every agent instance `<role>-<scope>`. Scope is the story ID or a short top
 The agent does not see this conversation. Always write the brief to `.orchestrator/work/<scope>/brief.md`: it is the durable record. Then hand it over in the way the mechanism demands:
 
 - **Agent tool:** pass the brief's **absolute path** plus one line on where the task fits. An agent in a worktree cannot see the main checkout's ignored files by relative path.
-- **Orca worker:** pass the brief **inline** as `--spec`, with the absolute paths and the role's own contract inside it. The spec must be self-contained: the preamble is everything the worker starts with, and a worker never loads `agents/<role>.md`. `references/harness.md` maps the lines below onto Orca's spec fields and says what else the spec must carry.
+- **Orca worker:** the brief file is the spec (`dispatch.mjs` passes it with `--spec-file`). Put the absolute paths and the role's own contract inside it. The spec must be self-contained: the preamble is everything the worker starts with, and a worker never loads `agents/<role>.md`. `references/harness.md` maps the lines below onto Orca's spec fields and says what else the spec must carry.
 
 Never paste conversation history into a brief.
 
