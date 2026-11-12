@@ -4,10 +4,10 @@
   "description": "An orchestrating main session, role agents, user stories with verifiable acceptance criteria, and a guard hook that holds every agent to its contract. Delegates through Orca supervised workers or Claude Code subagents.",
   "author": {
     "name": "Sydney and Claude",
-    "url": "https://github.com/sydneyhylia/Orchestrator"
+    "url": "https://github.com/sydneydesign/Orchestrator"
   },
-  "homepage": "https://github.com/sydneyhylia/Orchestrator",
-  "repository": "https://github.com/sydneyhylia/Orchestrator",
+  "homepage": "https://github.com/sydneydesign/Orchestrator",
+  "repository": "https://github.com/sydneydesign/Orchestrator",
   "license": "MIT",
   "keywords": [
     "orchestration",
