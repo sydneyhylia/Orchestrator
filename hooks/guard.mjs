@@ -151,6 +151,13 @@ if (input.hook_event_name === "PreToolUse" && ["Edit", "Write", "MultiEdit", "No
 
 // Split a command line into simple commands. Quoted text is kept apart: it is checked as a command
 // of its own when it is itself a git or shell call, or the script a shell runs (bash -c "...").
+// A line that is only `python… <<'X'` or `node… <<'X'` feeds that program text the shell does not touch:
+// the quoted delimiter stops expansion, and no other operator shares the line. Drop its body.
+// Anything else (a shell heredoc, an unquoted delimiter, a second heredoc, a prefix such as `cd x &&`) stays.
+function dropDataHeredocs(line) {
+  return line.replace(/(^|\n)([ \t]*(?:python3?|node)\b[^\n<;&|`$()]*<<-?[ \t]*(['"])(\w+)\3[^\n<;&|`$()]*)\n[\s\S]*?\n\4[ \t]*(?=\n|$)/g, "$1$2");
+}
+
 function commands(line) {
   const quoted = [];
   const bare = line.replace(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g, (_, d, s) => { quoted.push(d ?? s); return ` __Q${quoted.length - 1}__ `; });
@@ -169,18 +176,37 @@ function commands(line) {
 }
 
 const isGit = (t) => /(^|[\\/])git(\.exe)?$/i.test(t);
+// The index of the subcommand in git's arguments, after its global options (-C dir, -c key=value).
+function gitSubIndex(args) {
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) i += /^(-C|-c|--git-dir|--work-tree|--namespace)$/.test(args[i]) ? 2 : 1;
+  return i;
+}
+function gitSubcommand(c) {
+  const args = c.slice(isGit(c[0]) ? 1 : 2);
+  return String(args[gitSubIndex(args)] ?? "").toLowerCase();
+}
 
 function checkGit(args) {
-  // Skip global options to find the subcommand: git -C dir -c k=v push ...
-  let i = 0;
-  while (i < args.length && args[i].startsWith("-")) {
-    if (args[i] === "-c" && /^core\.hookspath=/i.test(args[i + 1] ?? "")) block("overriding core.hooksPath skips the project's hooks.");
-    i += /^(-C|-c|--git-dir|--work-tree|--namespace)$/.test(args[i]) ? 2 : 1;
-  }
+  const i = gitSubIndex(args);
+  args.slice(0, i).forEach((a, k) => { if (a === "-c" && /^core\.hookspath=/i.test(args[k + 1] ?? "")) block("overriding core.hooksPath skips the project's hooks."); });
   const sub = (args[i] ?? "").toLowerCase();
   const rest = args.slice(i + 1);
   const has = (re) => rest.some((a) => re.test(a));
   const dirArg = args.indexOf("-C") >= 0 ? path.resolve(cwd, args[args.indexOf("-C") + 1] ?? ".") : cwd;
+
+  // Once core.hooksPath is set, it stays: unsetting it or pointing it elsewhere skips the project's hooks.
+  // Reading it is fine, and so is setting it the first time (installing husky, for example).
+  const hooksKey = rest.findIndex((a) => /^core\.hookspath$/i.test(a));
+  const removesCore = has(/^--remove-section$/) && has(/^core$/i);
+  if (sub === "config" && (hooksKey >= 0 || removesCore) && !has(/^(--get|--get-all|--list|-l)$/)) {
+    let current = "";
+    try { current = execFileSync("git", ["config", "--get", "core.hooksPath"], { cwd: dirArg, stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); }
+    catch { /* not set */ }
+    const unsets = removesCore || has(/^--(unset|unset-all)$/) || rest.slice(0, Math.max(hooksKey, 0)).includes("unset");
+    const value = hooksKey >= 0 ? rest[hooksKey + 1] : undefined;
+    if (current && (unsets || (value !== undefined && value !== current))) block(`core.hooksPath stays at ${current}: the project's commit checks run from there.`);
+  }
 
   if (sub === "push") {
     if (has(/^(--force|--force-with-lease|--force-if-includes)/) || has(/^-[a-z]*f/i) || has(/^\+/)) block("force push is blocked.");
@@ -296,10 +322,11 @@ if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(in
     const failed = readBreaker().failures?.[runId]?.[cmd];
     if (failed?.times >= maxSameFailure) block(`\`${cmd.slice(0, 200)}\` failed ${failed.times} times in a row with the same output. Do not run it again: stop and report BLOCKED with that output and what you tried.`);
   }
-  const cmds = commands(String(input.tool_input?.command ?? "").replace(/\d*>&\d/g, " "));
+  const cmds = commands(dropDataHeredocs(String(input.tool_input?.command ?? "")).replace(/\d*>&\d/g, " "));
   // The branch check reads HEAD before the command runs, so a switch and a commit must not share a command.
-  const gitSubs = cmds.filter((c) => isGit(c[0]) || isGit(c[1] ?? "")).map((c) => c.join(" ").toLowerCase());
-  if (gitSubs.some((c) => /\s(switch|checkout)\s/.test(c + " ")) && gitSubs.some((c) => /\scommit(\s|$)/.test(c))) {
+  // Compare subcommands only: a commit message that mentions «switch» is not a branch change.
+  const gitSubs = cmds.filter((c) => isGit(c[0]) || isGit(c[1] ?? "")).map(gitSubcommand);
+  if (gitSubs.some((c) => c === "switch" || c === "checkout") && gitSubs.includes("commit")) {
     block("run the branch switch and the commit as separate commands.");
   }
   for (const raw of cmds) {
