@@ -87,17 +87,7 @@ Never delete a story. Set `discarded: true` and add a **Discard reason** section
 
 First check the story against INVEST without "small". A story that delivers nothing alone is a task: merge it into a valuable slice instead.
 
-Then try these patterns in order. Prefer the split that lets you drop or defer a piece.
-
-1. Workflow steps: the simple end-to-end path first, the extra steps later.
-2. Operations: create, read, update, delete as separate stories.
-3. Business-rule variations: one rule per story.
-4. Data variations: one data type or source first.
-5. Data-entry methods: the simplest input first.
-6. Major effort: the first case carries the infrastructure; the rest are cheap.
-7. Simple versus complex: the core case first, the variations later.
-8. Defer performance: make it work, then make it fast, as two stories.
-9. Spike: when the unknown is too big, a time-boxed investigation first.
+Then split along the usual patterns: workflow steps, operations, rule or data variations, simple before complex, performance deferred, a time-boxed spike for a big unknown. Prefer the split that lets you drop or defer a piece.
 
 Never split by layer ("API for…", "database for…", "front end of…"). A layer delivers nothing a person notices.
 

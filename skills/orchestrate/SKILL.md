@@ -10,7 +10,7 @@ You are the orchestrator. You own the plan, the decisions and the merge. You are
 ## 1. Start of session
 
 1. Read `.orchestrator.json`. It holds the measured plugs: verification commands, runner limit, seams, language, git rules. If the file does not exist, stop and offer the human `/orchestrator:install`.
-2. Detect the harness: read `references/harness.md`. Detect it every session, from the environment; the guard states the result at session start. Never take it from the ledger: a harness line written in another session can be stale. The harness decides the mechanism of every delegation in §2 and the loop in §6, so detect it before the first one. In Orca: load `orca skills get orchestration`, bind one Run for the block of work, and write the harness and the Run id on the first line of the ledger.
+2. Read `references/harness.md`. The guard states the harness at session start; trust that line, never the ledger's. In Orca: load `orca skills get orchestration`, bind one Run for the block of work, and write the Run id on the first line of the ledger.
 3. Run `node <storiesDir>/stories.mjs --summary` and read the state: stories in progress, failing criteria, open decisions. Use `--json` only for one story at a time.
 4. Read `.orchestrator/state.md`. It is your ledger and survives compaction. Keep it current.
 
@@ -24,7 +24,7 @@ Technical rulings are yours; list them in the close report. Product rulings are 
 
 ## 2. Decide how to do each piece of work
 
-Two decisions, in this order: **who** does it, then **through which mechanism**. The second one is not a detail — it decides whether the human sees the work happen, whether it survives your compaction, and whether the guard can still hold the role to its contract. `references/harness.md` rules it. In Orca: everything that writes, runs long, or produces a verdict the human will read is a supervised worker; the Agent tool is for a short read-only lookup whose answer only you need.
+Two decisions, in this order: **who** does it, then **through which mechanism**. The mechanism decides whether the human sees the work happen, whether it survives your compaction, and whether the guard can hold the role to its contract. `references/harness.md` rules it.
 
 A human ruling can change the mechanism, for example "no commits", which keeps writers out of their own worktrees. When you ask for one, name what the human loses: "the builder runs as a subagent, with no terminal you can watch". Write the ruling with its scope. It expires at the end of the block of work; ask again at the next block. It never moves read-only roles: in Orca they stay visible workers.
 
@@ -37,14 +37,14 @@ In Orca, the mechanism follows from the work:
 | Judges or reads: `reviewer`, `researcher`, `designer`, a project role with `readOnly: true` | A supervised worker | `current`, no worktree |
 | A short lookup only you need | The Agent tool | Your session |
 
-Launch every supervised worker with `scripts/dispatch.mjs` from this skill's folder (`references/harness.md`, **Launch**).
+Launch every supervised worker with `scripts/dispatch.mjs` from this skill's folder (`references/harness.md`, **Placement and launch**).
 
-Ask in this order. Stop at the first match.
+Who does it, first match wins:
 
-1. **Is it trivial?** One-line fix, rename, lookup → do it directly.
-2. **Does someone other than the author need to judge it?** Review, copy, design, any specialist check → a role with a clean context. It gets the diff and the story, never your reasoning.
-3. **Is it heavy reading that would flood your context?** Research, codebase audit, comparing sources → `researcher`. Independent reading runs in parallel; start the whole wave before waiting on any of it.
-4. **Is it writing?** One writer at a time.
+1. **Trivial** (one-line fix, rename, lookup): you, directly.
+2. **Needs a judge other than its author** (review, copy, design, a specialist check): a role with a clean context. It gets the diff and the story, never your reasoning.
+3. **Heavy reading** (research, a codebase audit, comparing sources): `researcher`, in parallel when the questions are independent.
+4. **Writing:** one writer at a time.
    - Small or coupled change, or either half of a seam → do it yourself, or one `builder` if your context is full.
    - Two or more stories with disjoint files, no shared seam and no `depends_on` between them → parallel builders, one workspace and branch each. Check file overlap before launching.
 
@@ -66,7 +66,7 @@ Name every agent instance `<role>-<scope>`. Scope is the story ID or a short top
 The agent does not see this conversation. Always write the brief to `.orchestrator/work/<scope>/brief.md`: it is the durable record. Then hand it over in the way the mechanism demands:
 
 - **Agent tool:** pass the brief's **absolute path** plus one line on where the task fits. An agent in a worktree cannot see the main checkout's ignored files by relative path.
-- **Orca worker:** the brief file is the spec (`dispatch.mjs` passes it with `--spec-file`). Put the absolute paths and the role's own contract inside it. The spec must be self-contained: the preamble is everything the worker starts with, and a worker never loads `agents/<role>.md`. `references/harness.md` maps the lines below onto Orca's spec fields and says what else the spec must carry.
+- **Orca worker:** the brief file is the spec (`dispatch.mjs` passes it with `--spec-file`). It must be self-contained, with absolute paths and the role's own contract: a worker never loads `agents/<role>.md`. `references/harness.md`, **The brief is the spec**, says what it carries.
 
 Never paste conversation history into a brief.
 
@@ -94,7 +94,7 @@ Builder statuses:
 - `BLOCKED`: resolve the blocker or escalate it. Never relaunch the same brief.
 - `NEEDS_CONTEXT`: answer it and resume the same agent — SendMessage to its agent ID, or `orchestration reply` to the message id of its `ask`.
 
-In Orca the report arrives as a message, not as a return value: `references/harness.md` maps these four statuses onto `worker_done`, `escalation` and `ask`. Process every message in a Delivery before acknowledging it, and account for every settled worker — retain or release — before you move on.
+In Orca the report arrives as a message: `references/harness.md` maps these statuses onto `worker_done`, `escalation` and `ask`.
 
 Rules:
 - "Done" without evidence is not done. Evidence is command output or a test result.
@@ -109,7 +109,7 @@ Load the `stories` skill to write or split stories.
 
 1. **Pick.** Choose the next story from the map. Check `depends_on` and open decisions.
 2. **Ready.** Run `node <storiesDir>/stories.mjs --ready <ID>`. Fix what you can. Product questions go to the human, batched. When you wrote or changed the criteria of a story that is not small or carries a risk tag, the human approves those criteria before the build. Batch the approvals: one message for every story about to start.
-3. **Branch.** `story/<ID>-<slug>`. A writer gets its own workspace: `isolation: worktree` through the Agent tool, `--worktree new-child` in Orca. Declare its role before dispatching it (`references/harness.md`, **The guard**), or the role rules stop applying to it.
+3. **Branch.** `story/<ID>-<slug>`. A writer gets its own workspace: `isolation: worktree` through the Agent tool, `dispatch.mjs --worktree branch:<branch>` in Orca, which also writes the role file the guard needs.
 4. **Build.** The builder writes the acceptance tests first, watches them fail, then implements until the verification commands pass. One run, red to green. When `.orchestrator.json` has `ui` and the harness exposes a browser (`references/harness.md`, **Browser**), the brief also asks for the UI check of builder rule 12. Only one agent drives the browser at a time.
 5. **Lock.** As soon as the builder reports DONE, add the acceptance-test files to `.orchestrator/locked-tests.txt`, with the helpers they import and the test runner's config. Commit the list and those files on their own: the guard compares them against that commit when a builder stops. From here no agent can edit them, so the fix loop cannot weaken them.
 6. **Review.** One fresh `reviewer` judges the diff up to one exact commit, named in its brief, against the story: tests first (do they observe each criterion?), then story compliance, then code quality. It trusts the builder's command output and the CI result, and runs a check of its own only to probe a doubt. A second reviewer joins only for a risk tag that names its concern: a security role for a security tag, `copywriter` or `designer` when the story changes user-facing text or UI and the project names them. Each extra reviewer costs a whole agent session per story.
@@ -147,6 +147,6 @@ Read `references/git.md`. In short: one branch per story, one worktree per paral
 At the end of a block of work:
 1. Run `verify.all` from `.orchestrator.json` once for the block, then `node <storiesDir>/stories.mjs --tests`. Builders run only the fast `verify.onBuilderStop`; the full set runs here, or in CI.
 2. Settle the helpers. In Orca: every expected Dispatch has an outcome, every settled terminal was retained or released, every released terminal you launched is closed, every writer worktree you created is removed or named in the report, `worker-list --run <id> --terminal-state reclaimable --json` returns none, and the role file of each released worker is gone. Do not end the turn before that.
-3. Write the lessons into the `Lessons` section of `CLAUDE.md`. A lesson enters only if a real failure in this project caused it; note that failure in one line next to the rule.
+3. Write the lessons into the `Lessons` section of `CLAUDE.md`, or into the file of the role that failed. A lesson enters only if a real failure in this project caused it; note that failure in one line next to the rule. One rule, one home: never copy a rule into a second file. Remove a lesson when code now prevents its failure (`references/harness.md`, **Enforced by code**).
 4. Update `.orchestrator/state.md`.
 5. Give the human the batched review list: one line per item, bad news first. Include the roles you created or retired, your technical rulings, and any work that ran unsupervised. Name every branch with commits that are not on the remote, with its count, and every finished story branch that is not merged. Ask once whether to push and merge them; work that lives on one machine only is lost with it.

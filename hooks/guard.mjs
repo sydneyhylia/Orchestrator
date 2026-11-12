@@ -359,7 +359,7 @@ if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(in
       continue;
     }
     // Orca workers run in orca.workerPermissionMode, or else in this session's mode, never in Orca's
-    // default arguments (harness.md, Launch).
+    // default arguments (harness.md, Placement and launch).
     if (/^orca(\.exe)?$/i.test(tokens[0]) && tokens[1] === "worktree" && /^(rm|remove)$/.test(tokens[2] ?? "") && tokens.includes("--force")) block("orca worktree rm --force discards uncommitted work. Remove it without --force, or leave it and name it in the close report.");
     const workerMode = cliMode(config.orca?.workerPermissionMode || input.permission_mode);
     if (/^orca(\.exe)?$/i.test(tokens[0]) && workerMode) {

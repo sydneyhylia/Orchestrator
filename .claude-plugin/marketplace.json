@@ -1,12 +1,14 @@
 {
   "name": "orchestrator-local",
-  "description": "Local marketplace for the Orchestrator plugin",
-  "owner": { "name": "orchestrator" },
+  "description": "Marketplace for the Orchestrator plugin",
+  "owner": {
+    "name": "orchestrator"
+  },
   "plugins": [
     {
       "name": "orchestrator",
       "source": "./",
-      "description": "Orchestrator: orchestrator + role agents + user stories"
+      "description": "Orchestrated product work: an orchestrating main session, role agents, verifiable user stories and a guard hook."
     }
   ]
 }

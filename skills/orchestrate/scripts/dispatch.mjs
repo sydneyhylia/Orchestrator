@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Launches one supervised Orca worker in one command, with the steps of references/harness.md
- * (Launch, The guard) in order:
+ * (Placement and launch, The guard) in order:
  *
  *   1. resolve the workspace: `current` (the main checkout) or `branch:<branch>` (a writer's worktree);
  *   2. refuse a second worker with the same role and scope there (by role file: Claude renames its tab);
