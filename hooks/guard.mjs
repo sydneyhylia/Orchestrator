@@ -151,19 +151,12 @@ if (input.hook_event_name === "PreToolUse" && ["Edit", "Write", "MultiEdit", "No
 
 // Split a command line into simple commands. Quoted text is kept apart: it is checked as a command
 // of its own when it is itself a git or shell call, or the script a shell runs (bash -c "...").
-// A line that is only `python… <<'X'` or `node… <<'X'` feeds that program text the shell does not touch:
-// the quoted delimiter stops expansion, and no other operator shares the line. Drop its body.
-// Anything else (a shell heredoc, an unquoted delimiter, a second heredoc, a prefix such as `cd x &&`) stays.
-function dropDataHeredocs(line) {
-  return line.replace(/(^|\n)([ \t]*(?:python3?|node)\b[^\n<;&|`$()]*<<-?[ \t]*(['"])(\w+)\3[^\n<;&|`$()]*)\n[\s\S]*?\n\4[ \t]*(?=\n|$)/g, "$1$2");
-}
-
 function commands(line) {
   const quoted = [];
   const bare = line.replace(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g, (_, d, s) => { quoted.push(d ?? s); return ` __Q${quoted.length - 1}__ `; });
   const scripts = new Set([...bare.matchAll(/(?:^|[\s\\/;&|(])(?:bash|sh|zsh|pwsh|powershell|cmd)(?:\.exe)?\s+(?:-\w*c|-command|\/c)\s+__Q(\d+)__/gi)].map((m) => +m[1]));
   const out = [];
-  for (const seg of bare.split(/&&|\|\||;|\||\n|\$\(|`|\(|\)/)) {
+  for (const seg of bare.split(/&&|\|\||;|\||&|\n|\$\(|`|\(|\)/)) {
     const tokens = seg.trim().split(/\s+/).filter(Boolean);
     // .bare keeps the quotes out: a > inside a quoted argument is text, not a redirection.
     const restore = (t) => t.replace(/__Q(\d+)__/g, (_, i) => quoted[i]);
@@ -198,12 +191,15 @@ function checkGit(args) {
   // Once core.hooksPath is set, it stays: unsetting it or pointing it elsewhere skips the project's hooks.
   // Reading it is fine, and so is setting it the first time (installing husky, for example).
   const hooksKey = rest.findIndex((a) => /^core\.hookspath$/i.test(a));
-  const removesCore = has(/^--remove-section$/) && has(/^core$/i);
-  if (sub === "config" && (hooksKey >= 0 || removesCore) && !has(/^(--get|--get-all|--list|-l)$/)) {
+  // A whole-section change (remove, rename) or an editor session can drop it too.
+  const touchesCore = has(/^(--)?(remove-section|rename-section)$/) && has(/^core$/i);
+  const edits = has(/^(-e|--edit|edit)$/);
+  if (sub === "config" && (hooksKey >= 0 || touchesCore || edits) && !has(/^(--get|--get-all|--list|-l|get|list)$/)) {
+    // The project's own value: a global hooksPath must not stop a project setting its first one.
     let current = "";
-    try { current = execFileSync("git", ["config", "--get", "core.hooksPath"], { cwd: dirArg, stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); }
+    try { current = execFileSync("git", ["config", "--local", "--get", "core.hooksPath"], { cwd: dirArg, stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); }
     catch { /* not set */ }
-    const unsets = removesCore || has(/^--(unset|unset-all)$/) || rest.slice(0, Math.max(hooksKey, 0)).includes("unset");
+    const unsets = touchesCore || edits || has(/^--(unset|unset-all)$/) || rest.slice(0, Math.max(hooksKey, 0)).includes("unset");
     const value = hooksKey >= 0 ? rest[hooksKey + 1] : undefined;
     if (current && (unsets || (value !== undefined && value !== current))) block(`core.hooksPath stays at ${current}: the project's commit checks run from there.`);
   }
@@ -283,7 +279,7 @@ const isProbe = (c) => {
   if (/^rtk$/i.test(t[0] ?? "") && /^(test|err|summary|proxy)$/i.test(t[1] ?? "")) t = t.slice(2);
   t = t.filter((x) => !/^(rtk|sudo|command|env|time)$/i.test(x) && !/^\$?(env:)?[A-Za-z_]\w*=/.test(x));
   return /^(grep|egrep|fgrep|rg|findstr|select-string|sls|test|\[|\[\[|diff|cmp|fc)$/i.test(t[0] ?? "")
-    || (isGit(t[0] ?? "") && /^(diff|grep|rev-parse|ls-files|show-ref|merge-base|cat-file|check-ignore|config)$/i.test(t.find((x, i) => i > 0 && !x.startsWith("-")) ?? ""));
+    || (isGit(t[0] ?? "") && /^(diff|grep|rev-parse|ls-files|show-ref|merge-base|cat-file|check-ignore|config)$/i.test(gitSubcommand(t)));
 };
 function readBreaker() { try { return JSON.parse(stripBom(readFileSync(breakerPath, "utf8"))); } catch { return {}; } }
 // Only this run is kept: parallel builders work in their own worktrees, each with its own file.
@@ -322,7 +318,7 @@ if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(in
     const failed = readBreaker().failures?.[runId]?.[cmd];
     if (failed?.times >= maxSameFailure) block(`\`${cmd.slice(0, 200)}\` failed ${failed.times} times in a row with the same output. Do not run it again: stop and report BLOCKED with that output and what you tried.`);
   }
-  const cmds = commands(dropDataHeredocs(String(input.tool_input?.command ?? "")).replace(/\d*>&\d/g, " "));
+  const cmds = commands(String(input.tool_input?.command ?? "").replace(/\d*>&\d/g, " "));
   // The branch check reads HEAD before the command runs, so a switch and a commit must not share a command.
   // Compare subcommands only: a commit message that mentions «switch» is not a branch change.
   const gitSubs = cmds.filter((c) => isGit(c[0]) || isGit(c[1] ?? "")).map(gitSubcommand);
@@ -339,7 +335,7 @@ if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(in
     const tokens = raw.slice(s);
     if (!tokens.length) continue;
     if (isGit(tokens[0])) {
-      if (readOnlyRole && !/^(status|diff|log|show|blame|grep|ls-files|rev-parse|branch|remote)$/i.test(tokens.find((t, i) => i > 0 && !t.startsWith("-")) ?? "")) block(`${agentType} is read-only. It may only run git commands that read.`);
+      if (readOnlyRole && !/^(status|diff|log|show|blame|grep|ls-files|rev-parse|branch|remote)$/i.test(gitSubcommand(tokens))) block(`${agentType} is read-only. It may only run git commands that read.`);
       checkGit(tokens.slice(1));
       continue;
     }
