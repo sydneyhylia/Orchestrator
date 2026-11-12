@@ -168,6 +168,7 @@ function commands(line) {
   return out;
 }
 
+const INTERPRETERS = /^(\S*[\\/])?(python[0-9.]*|py|node|perl|ruby|deno|bun|php|osascript)(\.exe)?$/i;
 const isGit = (t) => /(^|[\\/])git(\.exe)?$/i.test(t);
 // The index of the subcommand in git's arguments, after its global options (-C dir, -c key=value).
 function gitSubIndex(args) {
@@ -334,6 +335,12 @@ if (input.hook_event_name === "PreToolUse" && ["Bash", "PowerShell"].includes(in
     }
     const tokens = raw.slice(s);
     if (!tokens.length) continue;
+    // A script run inline (node -e, python -c, a heredoc) can call git in shapes the checks here cannot read:
+    // execFileSync('git', [...]), a cd before it, a quote the parser pairs wrongly. When it mentions git, ask.
+    if (INTERPRETERS.test(tokens[0])) {
+      const script = tokens.some((t) => t.includes("<<")) ? String(input.tool_input?.command ?? "") : tokens.slice(1).join(" ");
+      if (/(^|[^\w-])git(?![\w-])/i.test(script)) confirm(`this ${tokens[0]} script mentions git, and git calls inside a script are not checked. Confirm it does not commit, push or rewrite history.`);
+    }
     if (isGit(tokens[0])) {
       if (readOnlyRole && !/^(status|diff|log|show|blame|grep|ls-files|rev-parse|branch|remote)$/i.test(gitSubcommand(tokens))) block(`${agentType} is read-only. It may only run git commands that read.`);
       checkGit(tokens.slice(1));
